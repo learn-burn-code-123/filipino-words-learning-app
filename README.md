@@ -18,6 +18,9 @@ The game includes the following Filipino words:
 - **Mm**: mata, maya, mangga, mais, manok, mani, mami, mesa, misa
 - **Ss**: sabon, saging, sako, sali, sipa, siko, sopas, sulat, susi
 - **Aa**: aklat, ahas, ama, anak, anim, apoy, araw, aso, atis
+- **Bb**: baboy, baka, baso, bata, bibig, bilog, bintana, bola, bulaklak
+- **Ii**: ibon, ilaw, ilog, ilong, ipis, ipo-ipo, isa, isda, itlog
+- **Oo**: obispo, otap, okra, orasan, oso, ospital, oras, orasyon, ostra
 
 ## Getting Started
 
@@ -30,7 +33,7 @@ The game includes the following Filipino words:
 
 1. Clone the repository:
    ```
-   git clone https://github.com/yourusername/filipino-words-game.git
+   git clone https://github.com/pinecrest/filipino-words-game.git
    cd filipino-words-game
    ```
 
