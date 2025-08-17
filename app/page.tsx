@@ -90,21 +90,74 @@ function shuffle(arr: any[]) {
   return a;
 }
 
-// Web Speech: try to speak Filipino
+// Helper function for speech synthesis with Filipino voice settings
+function continueWithVoices(utter: SpeechSynthesisUtterance, voices: SpeechSynthesisVoice[], text: string) {
+  // Try to find Filipino or Tagalog voice first
+  const filipinoVoice = voices.find(v => /fil|tag/i.test(v.lang));
+  
+  // If Filipino voice is available, use it
+  if (filipinoVoice) {
+    utter.voice = filipinoVoice;
+  } else {
+    // Otherwise use a female voice which tends to sound better for Filipino
+    const femaleVoice = voices.find(v => v.name.includes('Female'));
+    if (femaleVoice) utter.voice = femaleVoice;
+  }
+  
+  // Adjust speech parameters for Filipino accent
+  utter.rate = 0.75; // Slower rate for clearer pronunciation
+  utter.pitch = 1.2; // Slightly higher pitch for Filipino accent
+  
+  // Add slight pauses between syllables for Filipino words
+  // This helps with the rhythm of Filipino pronunciation
+  const enhancedText = addFilipinoPronunciationHints(text);
+  utter.text = enhancedText;
+  
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(utter);
+}
+
+// Web Speech: enhanced Filipino pronunciation
 function speak(text: string) {
   try {
     const utter = new SpeechSynthesisUtterance(text);
-    const voices = window.speechSynthesis.getVoices();
-    // Prefer a Filipino voice if available
-    const filipinoVoice = voices.find(v => /fil|tag/i.test(v.lang));
-    if (filipinoVoice) utter.voice = filipinoVoice;
-    utter.rate = 0.9;
-    utter.pitch = 1.0;
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(utter);
+    
+    // Load voices and ensure they're available
+    let voices = window.speechSynthesis.getVoices();
+    if (voices.length === 0) {
+      // If voices aren't loaded yet, wait for them
+      window.speechSynthesis.onvoiceschanged = () => {
+        voices = window.speechSynthesis.getVoices();
+        continueWithVoices(utter, voices, text);
+      };
+    } else {
+      continueWithVoices(utter, voices, text);
+    }
   } catch (_) {
-    // ignore
+    // ignore errors
   }
+}
+
+// Helper function to enhance Filipino pronunciation
+function addFilipinoPronunciationHints(text: string): string {
+  // Don't modify the actual text that will be displayed
+  // Just add subtle pronunciation hints for the speech engine
+  
+  // Common Filipino pronunciation patterns
+  let enhancedText = text
+    // Ensure proper stress on vowels
+    .replace(/a/g, 'ah')
+    .replace(/e/g, 'eh')
+    .replace(/i/g, 'ee')
+    .replace(/o/g, 'oh')
+    .replace(/u/g, 'oo')
+    
+    // Handle common Filipino consonant combinations
+    .replace(/ng/g, 'n-g')
+    .replace(/ay/g, 'ai')
+    .replace(/aw/g, 'au');
+    
+  return enhancedText;
 }
 
 function useLocalStorage(key: string, initial: any) {
