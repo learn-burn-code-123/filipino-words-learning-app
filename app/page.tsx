@@ -94,10 +94,18 @@ function shuffle(arr: any[]) {
 function continueWithVoices(utter: SpeechSynthesisUtterance, voices: SpeechSynthesisVoice[], text: string) {
   // Try to find Filipino or Tagalog voice first
   const filipinoVoice = voices.find(v => /fil|tag/i.test(v.lang));
+  const spanishVoice = voices.find(v => /es/i.test(v.lang) && v.name.includes('Female'));
+  const asianVoice = voices.find(v => /(ja|ko|id|ms)/i.test(v.lang) && v.name.includes('Female'));
   
-  // If Filipino voice is available, use it
+  // Voice selection priority: Filipino > Spanish > Asian > Female
   if (filipinoVoice) {
     utter.voice = filipinoVoice;
+  } else if (spanishVoice) {
+    // Spanish voices often handle Filipino phonetics better than English
+    utter.voice = spanishVoice;
+  } else if (asianVoice) {
+    // Asian voices as third option
+    utter.voice = asianVoice;
   } else {
     // Otherwise use a female voice which tends to sound better for Filipino
     const femaleVoice = voices.find(v => v.name.includes('Female'));
@@ -105,13 +113,24 @@ function continueWithVoices(utter: SpeechSynthesisUtterance, voices: SpeechSynth
   }
   
   // Adjust speech parameters for Filipino accent
-  utter.rate = 0.75; // Slower rate for clearer pronunciation
-  utter.pitch = 1.2; // Slightly higher pitch for Filipino accent
+  utter.rate = 0.65; // Even slower rate for clearer pronunciation
+  utter.pitch = 1.15; // Slightly higher pitch for Filipino accent
   
-  // Add slight pauses between syllables for Filipino words
-  // This helps with the rhythm of Filipino pronunciation
+  // Add pauses and pronunciation hints for Filipino words
   const enhancedText = addFilipinoPronunciationHints(text);
   utter.text = enhancedText;
+  
+  // Use SSML if supported by the browser
+  try {
+    if ('speechSynthesis' in window && 'SpeechSynthesisUtterance' in window) {
+      // Some browsers support SSML for better pronunciation control
+      const ssmlText = createSSMLForFilipino(text);
+      if (ssmlText) utter.text = ssmlText;
+    }
+  } catch (e) {
+    // Fallback to enhanced text if SSML fails
+    console.log('SSML not supported, using enhanced text');
+  }
   
   window.speechSynthesis.cancel();
   window.speechSynthesis.speak(utter);
@@ -140,24 +159,193 @@ function speak(text: string) {
 
 // Helper function to enhance Filipino pronunciation
 function addFilipinoPronunciationHints(text: string): string {
-  // Don't modify the actual text that will be displayed
-  // Just add subtle pronunciation hints for the speech engine
+  // First, handle common Filipino digraphs and special sounds
+  let enhancedText = text.toLowerCase()
+    // Handle digraphs first (must come before single letter replacements)
+    .replace(/ng/g, 'ng-') // Filipino 'ng' sound
+    .replace(/ay/g, 'ah-ee') // Filipino 'ay' diphthong
+    .replace(/aw/g, 'ah-oo') // Filipino 'aw' diphthong
+    .replace(/oy/g, 'oh-ee') // Filipino 'oy' diphthong
+    .replace(/uy/g, 'oo-ee') // Filipino 'uy' diphthong
+    .replace(/iw/g, 'ee-oo') // Filipino 'iw' diphthong
+    .replace(/ey/g, 'eh-ee') // Filipino 'ey' diphthong
+    
+    // Special consonant combinations
+    .replace(/ty/g, 'ty-') // Filipino 'ty' sound
+    .replace(/sy/g, 'sy-') // Filipino 'sy' sound
+    .replace(/ny/g, 'ny-') // Filipino 'ny' sound
+    .replace(/ky/g, 'ky-') // Filipino 'ky' sound
+    
+    // Vowels - more accurate Filipino pronunciation
+    .replace(/a/g, 'ah') // Filipino 'a' is more open
+    .replace(/e/g, 'eh') // Filipino 'e' is between 'e' and 'eh'
+    .replace(/i/g, 'ee') // Filipino 'i' is like 'ee' in 'see'
+    .replace(/o/g, 'oh') // Filipino 'o' is more rounded
+    .replace(/u/g, 'oo') // Filipino 'u' is like 'oo' in 'moon'
+    
+    // Consonants that need special treatment
+    .replace(/r/g, 'r-') // Filipino 'r' is tapped, not trilled
+    .replace(/p([^h]|$)/g, 'p$1') // Unaspirated 'p'
+    .replace(/t([^h]|$)/g, 't$1') // Unaspirated 't'
+    .replace(/k([^h]|$)/g, 'k$1'); // Unaspirated 'k'
   
-  // Common Filipino pronunciation patterns
-  let enhancedText = text
-    // Ensure proper stress on vowels
-    .replace(/a/g, 'ah')
-    .replace(/e/g, 'eh')
-    .replace(/i/g, 'ee')
-    .replace(/o/g, 'oh')
-    .replace(/u/g, 'oo')
-    
-    // Handle common Filipino consonant combinations
-    .replace(/ng/g, 'n-g')
-    .replace(/ay/g, 'ai')
-    .replace(/aw/g, 'au');
-    
+  // Add slight pauses between syllables for better rhythm
+  // This regex adds a tiny pause after each vowel followed by a consonant
+  enhancedText = enhancedText.replace(/([aeiou])([bcdfghjklmnpqrstvwxyz])/gi, '$1 $2');
+  
   return enhancedText;
+}
+
+// Create SSML markup for better Filipino pronunciation control
+function createSSMLForFilipino(text: string): string {
+  try {
+    // Only use SSML if the text is a single Filipino word (not a sentence)
+    if (text.trim().split(/\s+/).length > 1) return '';
+    
+    // Get syllables with stress marks
+    const stressedWord = addSyllableStress(text);
+    
+    // Basic SSML template with prosody adjustments for Filipino
+    return `<speak>
+      <prosody rate="slow" pitch="medium">
+        <phoneme alphabet="ipa" ph="${getIPAForFilipino(stressedWord)}">${text}</phoneme>
+      </prosody>
+    </speak>`;
+  } catch (e) {
+    return '';
+  }
+}
+
+// Add syllable stress patterns for Filipino words
+function addSyllableStress(word: string): string {
+  // Clean the word
+  const cleanWord = word.toLowerCase().trim();
+  if (!cleanWord) return word;
+  
+  // Filipino stress rules (simplified):
+  // 1. Most Filipino words are stressed on the penultimate (second-to-last) syllable
+  // 2. Words ending in consonants (except n/ng) often stress the final syllable
+  // 3. Words with accent marks follow those marks
+  
+  // Count syllables (roughly - each vowel or vowel cluster counts as one syllable)
+  const syllables = cleanWord.match(/[aeiou]+/gi) || [];
+  const syllableCount = syllables.length;
+  
+  if (syllableCount <= 1) {
+    // Single syllable words - stress the only syllable
+    return cleanWord;
+  }
+  
+  // Check if word ends in consonant (except n/ng)
+  const endsInConsonant = /[bcdfghjklmpqrstvwxyz]$/i.test(cleanWord) && 
+                         !(/[n]$/i.test(cleanWord)) && 
+                         !(/ng$/i.test(cleanWord));
+  
+  // Apply stress mark to the appropriate syllable
+  if (endsInConsonant) {
+    // Stress the last syllable for words ending in consonants (except n/ng)
+    return applyStressToLastSyllable(cleanWord);
+  } else {
+    // Default Filipino pattern: stress the penultimate syllable
+    return applyStressToPenultimateSyllable(cleanWord, syllableCount);
+  }
+}
+
+// Apply stress to the last syllable of a word
+function applyStressToLastSyllable(word: string): string {
+  // Find the last vowel cluster in the word
+  const lastVowelMatch = word.match(/([aeiou]+)[^aeiou]*$/i);
+  if (!lastVowelMatch || !lastVowelMatch.index) return word;
+  
+  // Add stress marker to the first vowel of the last syllable
+  const index = lastVowelMatch.index;
+  return word.substring(0, index) + word.charAt(index).toUpperCase() + word.substring(index + 1);
+}
+
+// Apply stress to the penultimate (second-to-last) syllable
+function applyStressToPenultimateSyllable(word: string, syllableCount: number): string {
+  if (syllableCount <= 1) return word;
+  
+  // Find all vowel clusters
+  const vowelMatches = Array.from(word.matchAll(/([aeiou]+)/gi));
+  if (vowelMatches.length < 2) return word;
+  
+  // Get the penultimate vowel cluster
+  const penultimateMatch = vowelMatches[vowelMatches.length - 2];
+  if (!penultimateMatch || !penultimateMatch.index) return word;
+  
+  // Add stress marker to the first vowel of the penultimate syllable
+  const index = penultimateMatch.index;
+  return word.substring(0, index) + word.charAt(index).toUpperCase() + word.substring(index + 1);
+}
+
+// Convert Filipino words to IPA (International Phonetic Alphabet) with stress markers
+function getIPAForFilipino(text: string): string {
+  // Handle uppercase letters as stress markers
+  let result = '';
+  let i = 0;
+  
+  while (i < text.length) {
+    const char = text[i];
+    const isUppercase = char === char.toUpperCase() && char !== char.toLowerCase();
+    
+    if (isUppercase) {
+      // Add primary stress mark before stressed vowel
+      result += 'ˈ';
+      result += mapCharToIPA(char.toLowerCase());
+    } else {
+      result += mapCharToIPA(char);
+    }
+    
+    i++;
+  }
+  
+  // Handle special Filipino phoneme combinations after individual character mapping
+  return result
+    .replace(/nˈg/g, 'ˈŋ') // Stressed ng
+    .replace(/ng/g, 'ŋ')    // Unstressed ng
+    .replace(/aɪ/g, 'aj')   // More accurate for Filipino ay
+    .replace(/aʊ/g, 'aw')   // More accurate for Filipino aw
+    .replace(/oɪ/g, 'oj')   // More accurate for Filipino oy
+    .replace(/tʃ/g, 'tʃ')   // Filipino ch sound
+    .replace(/dʒ/g, 'dʒ');  // Filipino j sound
+}
+
+// Map individual characters to their IPA equivalents
+function mapCharToIPA(char: string): string {
+  const ipaMap: {[key: string]: string} = {
+    'a': 'a',   // Filipino 'a' is central low [a], not back [ɑ]
+    'e': 'ɛ',   // Filipino 'e' is open-mid front
+    'i': 'i',   // Filipino 'i' is close front
+    'o': 'o',   // Filipino 'o' is close-mid back rounded
+    'u': 'u',   // Filipino 'u' is close back rounded
+    'b': 'b',
+    'c': 'k',   // 'c' is pronounced as 'k' in Filipino
+    'd': 'd',
+    'f': 'f',
+    'g': 'g',
+    'h': 'h',
+    'j': 'h',   // 'j' is often pronounced as 'h' in Filipino
+    'k': 'k',
+    'l': 'l',
+    'm': 'm',
+    'n': 'n',
+    'ñ': 'nj',  // Spanish ñ in Filipino
+    'p': 'p',
+    'q': 'k',   // 'q' is pronounced as 'k' in Filipino
+    'r': 'ɾ',   // Filipino 'r' is a tap/flap
+    's': 's',
+    't': 't',
+    'v': 'b',   // 'v' is often pronounced as 'b' in Filipino
+    'w': 'w',
+    'x': 'ks',  // 'x' is pronounced as 'ks' in Filipino
+    'y': 'j',   // 'y' is pronounced as IPA 'j'
+    'z': 's',   // 'z' is often pronounced as 's' in Filipino
+    ' ': ' ',
+    '-': '-',
+  };
+  
+  return ipaMap[char] || char;
 }
 
 function useLocalStorage(key: string, initial: any) {
