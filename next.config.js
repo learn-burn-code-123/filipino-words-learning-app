@@ -7,7 +7,7 @@ const nextConfig = {
   },
   // Ensure trailing slashes for consistent routing
   trailingSlash: true,
-  distDir: process.env.BUILD_DIR || '.next',
+  distDir: process.env.BUILD_DIR || '.next'
 }
 
 module.exports = nextConfig
