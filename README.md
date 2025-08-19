@@ -66,6 +66,17 @@ To start the production server:
 npm start
 ```
 
+## Deployment
+
+This application is deployed on Netlify with the following configuration:
+
+- **Node.js Version**: 18.17.0 (specified in netlify.toml)
+- **Build Command**: `npm run build`
+- **Publish Directory**: `.next`
+- **Netlify Plugin**: @netlify/plugin-nextjs (v5.12.0)
+
+The application uses dynamic API routes for text-to-speech functionality which are handled by Netlify Functions.
+
 ## Technologies Used
 
 - Next.js
