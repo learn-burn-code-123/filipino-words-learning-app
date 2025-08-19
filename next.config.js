@@ -8,6 +8,14 @@ const nextConfig = {
   },
   // Ensure trailing slashes for consistent routing
   trailingSlash: true,
+  // Exclude API routes from static export to fix Netlify deployment
+  distDir: process.env.BUILD_DIR || '.next',
+  // Explicitly exclude API routes from static export
+  exportPathMap: async function () {
+    return {
+      '/': { page: '/' },
+    };
+  },
 }
 
 module.exports = nextConfig

@@ -19,9 +19,16 @@ const CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
  * API route for text-to-speech conversion using Google Translate TTS
  * Converts text to Filipino speech audio with caching and rate limiting
  */
+// Add export config to make route dynamic and prevent prerendering
+export const dynamic = 'force-dynamic';
+export const runtime = 'edge';
+export const fetchCache = 'force-no-store';
+export const revalidate = 0;
+
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const text = searchParams.get('text');
+  // Safely extract search params without using request.url directly
+  const url = new URL(request.url);
+  const text = url.searchParams.get('text');
   
   // Validate input
   if (!text) {
