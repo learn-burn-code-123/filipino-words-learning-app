@@ -8,7 +8,7 @@ A fun educational web app game designed to teach kindergarten children basic Fil
 - **Match Mode**: Matching game where children connect Filipino words with their corresponding images
 - **Quiz Mode**: Multiple-choice quiz to test word recognition
 - **Sticker Book**: Reward system where children earn stickers for completing activities
-- **Speech Synthesis**: Hear the correct pronunciation of Filipino words
+- **Authentic Filipino Pronunciation**: Hear the correct pronunciation of Filipino words using Google's Text-to-Speech technology
 - **Parent/Teacher Tips**: Helpful guidance for adults assisting children
 
 ## Word Sets
@@ -73,7 +73,8 @@ npm start
 - TypeScript
 - Tailwind CSS
 - Framer Motion
-- Web Speech API
+- Google Translate TTS API (for authentic Filipino pronunciation)
+- Web Speech API (as fallback)
 
 ## Educational Value
 
@@ -91,6 +92,8 @@ This application helps children:
 - Celebrate achievements with the sticker rewards system
 - Use the parent/teacher tips provided in the Learn section
 - Make learning interactive by acting out the meanings of words
+- Use the audio pronunciation feature (🔊 icon) to hear authentic Filipino pronunciation
+- Practice pronunciation together with your child to improve language skills
 
 ## License
 

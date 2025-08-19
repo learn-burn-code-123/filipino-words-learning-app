@@ -8,6 +8,9 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import { Volume2, RotateCcw, PartyPopper, Star, Info, ChevronRight, ChevronLeft } from "lucide-react";
 
+// Import the word-to-audio mapping
+import wordAudioMap from "../public/audio/word_audio_map.json";
+
 // ---------------------------
 // DATA
 // ---------------------------
@@ -92,38 +95,52 @@ function shuffle(arr: any[]) {
 
 // Helper function for speech synthesis with Filipino voice settings
 function continueWithVoices(utter: SpeechSynthesisUtterance, voices: SpeechSynthesisVoice[], text: string) {
-  // Try to find Filipino or Tagalog voice first
-  const filipinoVoice = voices.find(v => /fil|tag/i.test(v.lang));
-  const spanishVoice = voices.find(v => /es/i.test(v.lang) && v.name.includes('Female'));
-  const asianVoice = voices.find(v => /(ja|ko|id|ms)/i.test(v.lang) && v.name.includes('Female'));
+  // Voice selection priority based on research for best Filipino pronunciation
+  // 1. Native Filipino/Tagalog voice
+  // 2. Filipino-accented English voice
+  // 3. Spanish voice (phonetically similar to Filipino)
+  // 4. Indonesian/Malaysian voice (regional proximity)
+  // 5. Female voice (generally clearer for Filipino)
   
-  // Voice selection priority: Filipino > Spanish > Asian > Female
+  // Try to find the best voice match
+  const filipinoVoice = voices.find(v => /fil|tl|tag/i.test(v.lang));
+  const filipinoAccentedVoice = voices.find(v => /en-PH/i.test(v.lang));
+  const spanishVoice = voices.find(v => /es/i.test(v.lang) && v.name.includes('Female'));
+  const indonesianMalaysianVoice = voices.find(v => /(id|ms)/i.test(v.lang));
+  const femaleVoice = voices.find(v => v.name.includes('Female'));
+  
+  // Apply the best available voice
   if (filipinoVoice) {
     utter.voice = filipinoVoice;
+  } else if (filipinoAccentedVoice) {
+    utter.voice = filipinoAccentedVoice;
   } else if (spanishVoice) {
-    // Spanish voices often handle Filipino phonetics better than English
+    // Spanish voices handle Filipino phonetics well due to historical influence
     utter.voice = spanishVoice;
-  } else if (asianVoice) {
-    // Asian voices as third option
-    utter.voice = asianVoice;
-  } else {
-    // Otherwise use a female voice which tends to sound better for Filipino
-    const femaleVoice = voices.find(v => v.name.includes('Female'));
-    if (femaleVoice) utter.voice = femaleVoice;
+  } else if (indonesianMalaysianVoice) {
+    // Regional proximity provides similar phonetic patterns
+    utter.voice = indonesianMalaysianVoice;
+  } else if (femaleVoice) {
+    // Female voices tend to articulate vowels more clearly
+    utter.voice = femaleVoice;
   }
   
-  // Adjust speech parameters for Filipino accent
-  utter.rate = 0.65; // Even slower rate for clearer pronunciation
-  utter.pitch = 1.15; // Slightly higher pitch for Filipino accent
+  // Adjust speech parameters based on Filipino speech patterns
+  // Filipino is syllable-timed (not stress-timed like English)
+  utter.rate = 0.7;     // Moderate speed for clear syllable articulation
+  utter.pitch = 1.05;   // Natural pitch - Filipino isn't typically high-pitched
+  utter.volume = 1.0;   // Full volume for clarity
   
-  // Add pauses and pronunciation hints for Filipino words
-  const enhancedText = addFilipinoPronunciationHints(text);
+  // Apply stress patterns to the text
+  const stressedText = addSyllableStress(text);
+  
+  // Add pronunciation hints for Filipino words
+  const enhancedText = addFilipinoPronunciationHints(stressedText);
   utter.text = enhancedText;
   
-  // Use SSML if supported by the browser
+  // Use SSML if supported by the browser for more precise pronunciation control
   try {
     if ('speechSynthesis' in window && 'SpeechSynthesisUtterance' in window) {
-      // Some browsers support SSML for better pronunciation control
       const ssmlText = createSSMLForFilipino(text);
       if (ssmlText) utter.text = ssmlText;
     }
@@ -132,12 +149,520 @@ function continueWithVoices(utter: SpeechSynthesisUtterance, voices: SpeechSynth
     console.log('SSML not supported, using enhanced text');
   }
   
+  // Cancel any ongoing speech and speak the new text
   window.speechSynthesis.cancel();
   window.speechSynthesis.speak(utter);
 }
 
-// Web Speech: enhanced Filipino pronunciation
+// Audio cache to prevent repeated network requests
+const audioCache: Record<string, HTMLAudioElement> = {};
+
+// Function to speak text using pre-generated MP3 files with fallback options
 function speak(text: string) {
+  try {
+    // Show audio feedback
+    const feedbackElement = showAudioFeedback();
+    
+    // Create a cache key based on the text
+    const cacheKey = `tts-${btoa(encodeURIComponent(text))}`;
+    
+    // Check if audio is already in cache
+    if (audioCache[cacheKey]) {
+      // Cancel any ongoing speech
+      Object.values(audioCache).forEach(audio => audio.pause());
+      
+      // Play from cache
+      const cachedAudio = audioCache[cacheKey];
+      updateAudioFeedbackToPlaying(feedbackElement);
+      
+      cachedAudio.currentTime = 0;
+      cachedAudio.play().catch(error => {
+        console.error('Error playing cached audio:', error);
+        hideAudioFeedback(feedbackElement);
+        // Try fallback approaches
+        playFromLocalMP3(text, feedbackElement);
+      });
+      return;
+    }
+    
+    // Not in cache, try playing from local MP3 files first
+    playFromLocalMP3(text, feedbackElement);
+  } catch (error) {
+    console.error('TTS error:', error);
+    // Final fallback
+    fallbackToSpeechSynthesis(text);
+  }
+}
+
+// Helper function to play audio from local MP3 files
+function playFromLocalMP3(text: string, feedbackElement?: HTMLElement) {
+  // Create a cache key based on the text
+  const cacheKey = `tts-${btoa(encodeURIComponent(text))}`;
+  
+  // Check if we have a pre-generated MP3 for this word
+  const audioPath = (wordAudioMap as Record<string, string>)[text.toLowerCase()];
+  
+  if (audioPath) {
+    // We have a pre-generated MP3 file for this word
+    const audioElement = new Audio();
+    let hasPlayedOrErrored = false;
+    
+    // Set up event handlers
+    audioElement.oncanplaythrough = () => {
+      // Store in cache once loaded
+      audioCache[cacheKey] = audioElement;
+      
+      // Update feedback to show playing state
+      if (feedbackElement && !hasPlayedOrErrored) {
+        updateAudioFeedbackToPlaying(feedbackElement);
+      }
+    };
+    
+    audioElement.onplay = () => {
+      hasPlayedOrErrored = true;
+      // Update feedback to show playing state
+      if (feedbackElement) {
+        updateAudioFeedbackToPlaying(feedbackElement);
+      }
+    };
+    
+    audioElement.onended = () => {
+      if (feedbackElement) hideAudioFeedback(feedbackElement);
+    };
+    
+    audioElement.onerror = (e) => {
+      hasPlayedOrErrored = true;
+      console.error('Error loading local audio file:', e);
+      if (feedbackElement) hideAudioFeedback(feedbackElement);
+      
+      // Try fallback to API
+      fetchAndPlayAudio(text, cacheKey, feedbackElement);
+    };
+    
+    // Start loading and playing
+    audioElement.src = audioPath;
+    audioElement.load();
+    
+    // Play when possible
+    audioElement.play().catch(error => {
+      console.error('Error playing local audio:', error);
+      
+      if (!hasPlayedOrErrored) {
+        hasPlayedOrErrored = true;
+        // Try fallback to API
+        fetchAndPlayAudio(text, cacheKey, feedbackElement);
+      }
+    });
+  } else {
+    // No pre-generated MP3, fall back to API
+    fetchAndPlayAudio(text, cacheKey, feedbackElement);
+  }
+}
+
+// Helper function to fetch and play audio from API (as fallback)
+function fetchAndPlayAudio(text: string, cacheKey: string, feedbackElement?: HTMLElement) {
+  // Create a new audio element
+  const audioElement = new Audio();
+  
+  // Use our API route to get Filipino TTS from Google Translate
+  // Include trailing slash to prevent redirect and add timestamp to prevent caching issues
+  const timestamp = Date.now();
+  const apiUrl = `/api/tts/?text=${encodeURIComponent(text)}&_t=${timestamp}`;
+  
+  let hasPlayedOrErrored = false;
+  
+  // Set up event handlers
+  audioElement.oncanplaythrough = () => {
+    // Store in cache once loaded
+    audioCache[cacheKey] = audioElement;
+    
+    // Update feedback to show playing state
+    if (feedbackElement && !hasPlayedOrErrored) {
+      updateAudioFeedbackToPlaying(feedbackElement);
+    }
+  };
+  
+  audioElement.onplay = () => {
+    hasPlayedOrErrored = true;
+    // Update feedback to show playing state
+    if (feedbackElement) {
+      updateAudioFeedbackToPlaying(feedbackElement);
+    }
+  };
+  
+  audioElement.onended = () => {
+    if (feedbackElement) hideAudioFeedback(feedbackElement);
+  };
+  
+  audioElement.onerror = (e) => {
+    hasPlayedOrErrored = true;
+    console.error('Error loading audio from API:', e);
+    if (feedbackElement) hideAudioFeedback(feedbackElement);
+    
+    // Show error toast
+    showErrorToast('Could not load Filipino pronunciation');
+    
+    // Try a second attempt with a different approach
+    retryWithDirectFetch(text, feedbackElement);
+  };
+  
+  // Add timeout for slow connections
+  const timeoutId = setTimeout(() => {
+    if (audioElement.readyState < 3 && !hasPlayedOrErrored) { // Not enough data yet
+      console.warn('Audio loading timeout, trying alternative approach');
+      audioElement.src = ''; // Stop loading
+      retryWithDirectFetch(text, feedbackElement);
+    }
+  }, 8000); // 8 second timeout
+  
+  // Clear timeout when audio can play
+  audioElement.oncanplay = () => clearTimeout(timeoutId);
+  
+  // Cancel any ongoing speech
+  Object.values(audioCache).forEach(audio => audio.pause());
+  
+  // Set source and play
+  audioElement.src = apiUrl;
+  audioElement.load();
+  
+  // Play when possible
+  audioElement.play().catch(error => {
+    hasPlayedOrErrored = true;
+    console.error('Error playing audio:', error);
+    clearTimeout(timeoutId);
+    if (feedbackElement) hideAudioFeedback(feedbackElement);
+    
+    // Show error toast
+    showErrorToast('Could not play Filipino pronunciation');
+    
+    // Try a second attempt with a different approach
+    retryWithDirectFetch(text, feedbackElement);
+  });
+}
+
+// Use browser-compatible TTS approach that works in all browsers including Windsurf
+function useBrowserTTS(text: string, feedbackElement?: HTMLElement) {
+  try {
+    // Try direct browser TTS first
+    const voices = window.speechSynthesis.getVoices();
+    
+    // If voices are available immediately, proceed
+    if (voices.length > 0) {
+      speakWithBrowserTTS(text, voices, feedbackElement);
+    } else {
+      // Otherwise wait for voices to load
+      window.speechSynthesis.onvoiceschanged = () => {
+        const updatedVoices = window.speechSynthesis.getVoices();
+        speakWithBrowserTTS(text, updatedVoices, feedbackElement);
+      };
+    }
+  } catch (error) {
+    console.error('Browser TTS error:', error);
+    // Try API-based approach as fallback
+    const cacheKey = `tts-${btoa(encodeURIComponent(text))}`;
+    fetchAndPlayAudio(text, cacheKey, feedbackElement);
+  }
+}
+
+// Helper function to speak with browser TTS
+function speakWithBrowserTTS(text: string, voices: SpeechSynthesisVoice[], feedbackElement?: HTMLElement) {
+  // Create utterance
+  const utterance = new SpeechSynthesisUtterance(text);
+  
+  // Try to find a Filipino voice
+  let filipinoVoice = voices.find(voice => 
+    voice.lang === 'fil' || 
+    voice.lang === 'fil-PH' || 
+    voice.lang === 'tl' || 
+    voice.lang === 'tl-PH' ||
+    voice.name.toLowerCase().includes('filipino') ||
+    voice.name.toLowerCase().includes('tagalog')
+  );
+  
+  // If no Filipino voice, try to find any voice that might work
+  if (!filipinoVoice) {
+    filipinoVoice = voices.find(voice => 
+      voice.lang.startsWith('en') || // English as fallback
+      voice.lang.startsWith('es') || // Spanish has some phonetic similarities
+      voice.lang.startsWith('id')    // Indonesian has some similarities
+    );
+  }
+  
+  // Set the voice if found
+  if (filipinoVoice) {
+    utterance.voice = filipinoVoice;
+    utterance.lang = filipinoVoice.lang;
+  }
+  
+  // Set other properties for better pronunciation
+  utterance.rate = 0.9; // Slightly slower
+  utterance.pitch = 1.0;
+  
+  // Set up event handlers
+  utterance.onstart = () => {
+    if (feedbackElement) {
+      updateAudioFeedbackToPlaying(feedbackElement);
+    }
+  };
+  
+  utterance.onend = () => {
+    if (feedbackElement) {
+      hideAudioFeedback(feedbackElement);
+    }
+  };
+  
+  utterance.onerror = () => {
+    if (feedbackElement) {
+      hideAudioFeedback(feedbackElement);
+    }
+    // Try API-based approach as fallback
+    const cacheKey = `tts-${btoa(encodeURIComponent(text))}`;
+    fetchAndPlayAudio(text, cacheKey, feedbackElement);
+  };
+  
+  // Cancel any ongoing speech
+  window.speechSynthesis.cancel();
+  
+  // Speak
+  window.speechSynthesis.speak(utterance);
+}
+
+// Retry with direct fetch to handle CORS or other issues
+async function retryWithDirectFetch(text: string, feedbackElement?: HTMLElement) {
+  try {
+    // Try direct fetch to handle potential CORS issues
+    const timestamp = Date.now();
+    const response = await fetch(`/api/tts/?text=${encodeURIComponent(text)}&_t=${timestamp}`);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    const audioBlob = await response.blob();
+    const audioUrl = URL.createObjectURL(audioBlob);
+    
+    const audio = new Audio(audioUrl);
+    
+    if (feedbackElement) {
+      updateAudioFeedbackToPlaying(feedbackElement);
+    }
+    
+    audio.onended = () => {
+      URL.revokeObjectURL(audioUrl); // Clean up
+      if (feedbackElement) hideAudioFeedback(feedbackElement);
+    };
+    
+    audio.onerror = () => {
+      URL.revokeObjectURL(audioUrl); // Clean up
+      if (feedbackElement) hideAudioFeedback(feedbackElement);
+      // Final fallback to browser's speech synthesis
+      fallbackToSpeechSynthesis(text);
+    };
+    
+    await audio.play();
+  } catch (error) {
+    console.error('Error in retry attempt:', error);
+    if (feedbackElement) hideAudioFeedback(feedbackElement);
+    // Final fallback to browser's speech synthesis
+    fallbackToSpeechSynthesis(text);
+  }
+}
+
+// Show subtle audio feedback indicator with loading animation
+function showAudioFeedback(): HTMLElement {
+  let feedbackElement = document.getElementById('audio-feedback');
+  if (!feedbackElement) {
+    feedbackElement = document.createElement('div');
+    feedbackElement.id = 'audio-feedback';
+    feedbackElement.style.position = 'fixed';
+    feedbackElement.style.bottom = '60px';
+    feedbackElement.style.right = '20px';
+    feedbackElement.style.backgroundColor = 'rgba(0, 0, 0, 0.6)';
+    feedbackElement.style.color = 'white';
+    feedbackElement.style.padding = '8px 12px';
+    feedbackElement.style.borderRadius = '20px';
+    feedbackElement.style.fontSize = '14px';
+    feedbackElement.style.zIndex = '1000';
+    feedbackElement.style.transition = 'opacity 0.3s ease';
+    feedbackElement.style.display = 'flex';
+    feedbackElement.style.alignItems = 'center';
+    feedbackElement.style.gap = '8px';
+    document.body.appendChild(feedbackElement);
+  }
+  
+  // Create loading spinner
+  const spinnerContainer = document.createElement('div');
+  spinnerContainer.style.width = '14px';
+  spinnerContainer.style.height = '14px';
+  spinnerContainer.style.position = 'relative';
+  
+  const spinner = document.createElement('div');
+  spinner.style.border = '2px solid rgba(255, 255, 255, 0.3)';
+  spinner.style.borderRadius = '50%';
+  spinner.style.borderTopColor = 'white';
+  spinner.style.width = '100%';
+  spinner.style.height = '100%';
+  spinner.style.animation = 'audio-spinner 0.8s linear infinite';
+  spinnerContainer.appendChild(spinner);
+  
+  // Create animation style if it doesn't exist
+  if (!document.getElementById('audio-spinner-style')) {
+    const styleElement = document.createElement('style');
+    styleElement.id = 'audio-spinner-style';
+    styleElement.textContent = `
+      @keyframes audio-spinner {
+        to { transform: rotate(360deg); }
+      }
+    `;
+    document.head.appendChild(styleElement);
+  }
+  
+  // Clear previous content
+  feedbackElement.innerHTML = '';
+  
+  // Add icon and text
+  const icon = document.createElement('span');
+  icon.textContent = '🔊';
+  
+  const text = document.createElement('span');
+  text.textContent = 'Filipino pronunciation';
+  
+  // Append all elements
+  feedbackElement.appendChild(icon);
+  feedbackElement.appendChild(text);
+  feedbackElement.appendChild(spinnerContainer);
+  
+  // Show the feedback
+  feedbackElement.style.opacity = '1';
+  
+  return feedbackElement;
+}
+
+// Update audio feedback to show playing state
+function updateAudioFeedbackToPlaying(element: HTMLElement) {
+  // Find the spinner container
+  const spinnerContainer = element.querySelector('div');
+  if (spinnerContainer) {
+    // Replace spinner with checkmark
+    spinnerContainer.innerHTML = '';
+    spinnerContainer.style.display = 'flex';
+    spinnerContainer.style.alignItems = 'center';
+    spinnerContainer.style.justifyContent = 'center';
+    
+    const checkmark = document.createElement('span');
+    checkmark.textContent = '✓';
+    checkmark.style.color = '#4ade80'; // Green color
+    spinnerContainer.appendChild(checkmark);
+    
+    // Update text
+    const textElement = element.querySelector('span:nth-child(2)');
+    if (textElement) {
+      textElement.textContent = 'Playing';
+    }
+  }
+}
+
+// Hide audio feedback indicator with animation
+function hideAudioFeedback(element: HTMLElement) {
+  element.style.opacity = '0';
+  setTimeout(() => {
+    if (element.parentNode) {
+      element.parentNode.removeChild(element);
+    }
+  }, 300);
+}
+
+// Show error toast notification
+function showErrorToast(message: string) {
+  // Check if a toast container exists
+  let toastContainer = document.getElementById('toast-container');
+  if (!toastContainer) {
+    // Create toast container
+    toastContainer = document.createElement('div');
+    toastContainer.id = 'toast-container';
+    toastContainer.style.position = 'fixed';
+    toastContainer.style.bottom = '120px';
+    toastContainer.style.right = '20px';
+    toastContainer.style.zIndex = '1000';
+    toastContainer.style.display = 'flex';
+    toastContainer.style.flexDirection = 'column';
+    toastContainer.style.gap = '8px';
+    document.body.appendChild(toastContainer);
+  }
+  
+  // Create toast element
+  const toast = document.createElement('div');
+  toast.style.backgroundColor = 'rgba(239, 68, 68, 0.9)'; // Red background
+  toast.style.color = 'white';
+  toast.style.padding = '10px 16px';
+  toast.style.borderRadius = '8px';
+  toast.style.boxShadow = '0 2px 5px rgba(0, 0, 0, 0.2)';
+  toast.style.display = 'flex';
+  toast.style.alignItems = 'center';
+  toast.style.gap = '8px';
+  toast.style.minWidth = '250px';
+  toast.style.transform = 'translateY(10px)';
+  toast.style.opacity = '0';
+  toast.style.transition = 'all 0.3s ease';
+  
+  // Add error icon
+  const icon = document.createElement('span');
+  icon.textContent = '⚠️';
+  icon.style.fontSize = '16px';
+  
+  // Add message
+  const text = document.createElement('span');
+  text.textContent = message;
+  text.style.flex = '1';
+  
+  // Add close button
+  const closeBtn = document.createElement('span');
+  closeBtn.textContent = '×';
+  closeBtn.style.fontSize = '20px';
+  closeBtn.style.cursor = 'pointer';
+  closeBtn.style.marginLeft = '8px';
+  closeBtn.onclick = () => removeToast(toast);
+  
+  // Append elements to toast
+  toast.appendChild(icon);
+  toast.appendChild(text);
+  toast.appendChild(closeBtn);
+  
+  // Append toast to container
+  toastContainer.appendChild(toast);
+  
+  // Animate toast in
+  setTimeout(() => {
+    toast.style.transform = 'translateY(0)';
+    toast.style.opacity = '1';
+  }, 10);
+  
+  // Auto-remove after 5 seconds
+  setTimeout(() => {
+    removeToast(toast);
+  }, 5000);
+}
+
+// Helper to remove toast with animation
+function removeToast(toast: HTMLElement) {
+  toast.style.opacity = '0';
+  toast.style.transform = 'translateY(10px)';
+  
+  setTimeout(() => {
+    if (toast.parentNode) {
+      toast.parentNode.removeChild(toast);
+      
+      // Remove container if empty
+      const container = document.getElementById('toast-container');
+      if (container && container.children.length === 0) {
+        container.parentNode?.removeChild(container);
+      }
+    }
+  }, 300);
+}
+
+// Fallback to browser's speech synthesis if our API fails
+function fallbackToSpeechSynthesis(text: string) {
   try {
     const utter = new SpeechSynthesisUtterance(text);
     
@@ -160,38 +685,51 @@ function speak(text: string) {
 // Helper function to enhance Filipino pronunciation
 function addFilipinoPronunciationHints(text: string): string {
   // First, handle common Filipino digraphs and special sounds
-  let enhancedText = text.toLowerCase()
-    // Handle digraphs first (must come before single letter replacements)
-    .replace(/ng/g, 'ng-') // Filipino 'ng' sound
-    .replace(/ay/g, 'ah-ee') // Filipino 'ay' diphthong
-    .replace(/aw/g, 'ah-oo') // Filipino 'aw' diphthong
-    .replace(/oy/g, 'oh-ee') // Filipino 'oy' diphthong
-    .replace(/uy/g, 'oo-ee') // Filipino 'uy' diphthong
-    .replace(/iw/g, 'ee-oo') // Filipino 'iw' diphthong
-    .replace(/ey/g, 'eh-ee') // Filipino 'ey' diphthong
+  let enhancedText = text.toLowerCase();
+  
+  // Pre-process text to handle special cases
+  // Handle adjacent vowels with glottal stops (common in Filipino)
+  enhancedText = enhancedText
+    .replace(/([aeiou])([aeiou])/gi, '$1\'$2');
+  
+  // Handle digraphs and special sounds (must come before single letter replacements)
+  enhancedText = enhancedText
+    // The 'ng' sound is a single consonant in Filipino, not two separate sounds
+    .replace(/ng/g, 'ŋ')
+    
+    // Filipino diphthongs - more accurate pronunciation
+    .replace(/ay/g, 'ai') // 'ay' as in "baybay" (beach)
+    .replace(/aw/g, 'au') // 'aw' as in "araw" (sun)
+    .replace(/oy/g, 'oi') // 'oy' as in "toyboy"
+    .replace(/uy/g, 'ui') // 'uy' as in "suyuin" (to court)
+    .replace(/iw/g, 'iu') // 'iw' as in "tiwalang" (trust)
+    .replace(/ey/g, 'ei') // 'ey' as in "heyano" (hey there)
     
     // Special consonant combinations
-    .replace(/ty/g, 'ty-') // Filipino 'ty' sound
-    .replace(/sy/g, 'sy-') // Filipino 'sy' sound
-    .replace(/ny/g, 'ny-') // Filipino 'ny' sound
-    .replace(/ky/g, 'ky-') // Filipino 'ky' sound
+    .replace(/ty/g, 'ty') // Filipino 'ty' sound as in "pityang" (slightly open)
+    .replace(/sy/g, 'sy') // Filipino 'sy' sound as in "sya" (he/she)
+    .replace(/ny/g, 'ny') // Filipino 'ny' sound as in "nyaya" (invitation)
+    .replace(/ky/g, 'ky') // Filipino 'ky' sound
     
-    // Vowels - more accurate Filipino pronunciation
-    .replace(/a/g, 'ah') // Filipino 'a' is more open
-    .replace(/e/g, 'eh') // Filipino 'e' is between 'e' and 'eh'
-    .replace(/i/g, 'ee') // Filipino 'i' is like 'ee' in 'see'
-    .replace(/o/g, 'oh') // Filipino 'o' is more rounded
-    .replace(/u/g, 'oo') // Filipino 'u' is like 'oo' in 'moon'
+    // Vowels - authentic Filipino pronunciation based on research
+    // Filipino vowels maintain consistent sounds regardless of position
+    .replace(/a/g, 'a') // 'a' as in "father" - central low [a]
+    .replace(/e/g, 'e') // 'e' as in "bet" - consistent 'eh' sound
+    .replace(/i/g, 'i') // 'i' as in "see" - close front vowel
+    .replace(/o/g, 'o') // 'o' as in "go" - close-mid back rounded
+    .replace(/u/g, 'u') // 'u' as in "moon" - close back rounded
     
-    // Consonants that need special treatment
-    .replace(/r/g, 'r-') // Filipino 'r' is tapped, not trilled
-    .replace(/p([^h]|$)/g, 'p$1') // Unaspirated 'p'
-    .replace(/t([^h]|$)/g, 't$1') // Unaspirated 't'
-    .replace(/k([^h]|$)/g, 'k$1'); // Unaspirated 'k'
+    // Consonants with special Filipino pronunciation
+    .replace(/r([aeiou])/g, 'ɾ$1') // Filipino 'r' is a single tap, not a trill
+    .replace(/d([aeiou])/g, 'd̪$1') // Filipino 'd' is dental (tongue touches upper teeth)
+    .replace(/n([aeiou])/g, 'n$1') // Clear 'n' sound
+    .replace(/p([aeiou])/g, 'p$1') // Unaspirated 'p'
+    .replace(/t([aeiou])/g, 't$1') // Unaspirated 't'
+    .replace(/k([aeiou])/g, 'k$1'); // Unaspirated 'k'
   
-  // Add slight pauses between syllables for better rhythm
-  // This regex adds a tiny pause after each vowel followed by a consonant
-  enhancedText = enhancedText.replace(/([aeiou])([bcdfghjklmnpqrstvwxyz])/gi, '$1 $2');
+  // Add proper syllable timing (Filipino is syllable-timed, not stress-timed like English)
+  // Each syllable should receive roughly equal duration
+  enhancedText = enhancedText.replace(/([bcdfghjklmnpqrstvwxyzŋ])([aeiou])/gi, '$1·$2');
   
   return enhancedText;
 }
@@ -202,18 +740,83 @@ function createSSMLForFilipino(text: string): string {
     // Only use SSML if the text is a single Filipino word (not a sentence)
     if (text.trim().split(/\s+/).length > 1) return '';
     
-    // Get syllables with stress marks
+    // Apply syllable stress to the word
     const stressedWord = addSyllableStress(text);
     
-    // Basic SSML template with prosody adjustments for Filipino
-    return `<speak>
-      <prosody rate="slow" pitch="medium">
-        <phoneme alphabet="ipa" ph="${getIPAForFilipino(stressedWord)}">${text}</phoneme>
+    // Convert to IPA for more accurate pronunciation
+    const ipaText = convertToIPA(stressedWord);
+    
+    // Create SSML with phoneme, prosody, and break tags for authentic Filipino rhythm
+    const ssml = `<speak>
+      <prosody rate="0.8" pitch="medium">
+        <phoneme alphabet="ipa" ph="${ipaText}">${text}</phoneme>
+        <break time="10ms"/>
       </prosody>
     </speak>`;
+    
+    return ssml;
   } catch (e) {
     return '';
   }
+}
+
+// Convert Filipino text to IPA (International Phonetic Alphabet)
+function convertToIPA(text: string): string {
+  // Enhanced IPA conversion for Filipino based on linguistic research
+  let ipaText = text;
+  
+  // First handle uppercase vowels as stressed (marked by our stress function)
+  ipaText = ipaText
+    .replace(/A/g, 'ˈa')
+    .replace(/E/g, 'ˈɛ')
+    .replace(/I/g, 'ˈi')
+    .replace(/O/g, 'ˈo')
+    .replace(/U/g, 'ˈu');
+  
+  // Convert to lowercase for remaining processing
+  ipaText = ipaText.toLowerCase();
+  
+  // Handle digraphs and special sounds first
+  ipaText = ipaText
+    // The 'ng' digraph is a single sound in Filipino
+    .replace(/ng/g, 'ŋ')
+    // Diphthongs
+    .replace(/ay/g, 'aɪ')
+    .replace(/aw/g, 'aʊ')
+    .replace(/oy/g, 'oɪ')
+    .replace(/uy/g, 'uɪ')
+    .replace(/iw/g, 'iʊ')
+    .replace(/ey/g, 'eɪ');
+  
+  // Vowels - Filipino has 5 pure vowels, similar to Spanish
+  ipaText = ipaText
+    .replace(/a/g, 'a') // central open vowel
+    .replace(/e/g, 'ɛ') // mid-front unrounded vowel
+    .replace(/i/g, 'i') // close front unrounded vowel
+    .replace(/o/g, 'o') // mid-back rounded vowel
+    .replace(/u/g, 'u'); // close back rounded vowel
+  
+  // Consonants with special Filipino characteristics
+  ipaText = ipaText
+    .replace(/b/g, 'b')
+    .replace(/k/g, 'k̚') // unaspirated k with no audible release
+    .replace(/d/g, 'd̪') // dental d
+    .replace(/g/g, 'g')
+    .replace(/h/g, 'h')
+    .replace(/l/g, 'l')
+    .replace(/m/g, 'm')
+    .replace(/n/g, 'n')
+    .replace(/p/g, 'p̚') // unaspirated p with no audible release
+    .replace(/r/g, 'ɾ') // tapped r, not trilled
+    .replace(/s/g, 's')
+    .replace(/t/g, 't̚') // unaspirated t with no audible release
+    .replace(/w/g, 'w')
+    .replace(/y/g, 'j'); // palatal approximant
+  
+  // Add syllable boundaries for clearer pronunciation
+  ipaText = ipaText.replace(/([bcdfghjklmnpqrstvwxyzŋ])([aeiouɛɪʊ])/g, '$1.$2');
+  
+  return ipaText;
 }
 
 // Add syllable stress patterns for Filipino words
@@ -222,13 +825,14 @@ function addSyllableStress(word: string): string {
   const cleanWord = word.toLowerCase().trim();
   if (!cleanWord) return word;
   
-  // Filipino stress rules (simplified):
-  // 1. Most Filipino words are stressed on the penultimate (second-to-last) syllable
-  // 2. Words ending in consonants (except n/ng) often stress the final syllable
-  // 3. Words with accent marks follow those marks
+  // Filipino stress patterns (based on research):
+  // 1. Malumay - stress on the second-to-last syllable (most common)
+  // 2. Malumi - stress on the third-to-last syllable
+  // 3. Mabilis - stress on the last syllable with a glottal stop
+  // 4. Maragsa - stress on the last syllable without a glottal stop
   
-  // Count syllables (roughly - each vowel or vowel cluster counts as one syllable)
-  const syllables = cleanWord.match(/[aeiou]+/gi) || [];
+  // Count syllables based on vowel clusters
+  const syllables = identifySyllables(cleanWord);
   const syllableCount = syllables.length;
   
   if (syllableCount <= 1) {
@@ -236,19 +840,67 @@ function addSyllableStress(word: string): string {
     return cleanWord;
   }
   
-  // Check if word ends in consonant (except n/ng)
+  // Check word ending patterns to determine stress pattern
+  // Words ending in consonants (except n/ng) often follow Maragsa pattern
   const endsInConsonant = /[bcdfghjklmpqrstvwxyz]$/i.test(cleanWord) && 
                          !(/[n]$/i.test(cleanWord)) && 
                          !(/ng$/i.test(cleanWord));
   
-  // Apply stress mark to the appropriate syllable
-  if (endsInConsonant) {
-    // Stress the last syllable for words ending in consonants (except n/ng)
+  // Words ending in vowels typically follow Malumay pattern
+  const endsInVowel = /[aeiou]$/i.test(cleanWord);
+  
+  // Words with specific endings may follow Malumi pattern
+  const malumi = /[aeiou]han$|[aeiou]hin$/i.test(cleanWord);
+  
+  // Apply stress mark based on pattern
+  if (malumi && syllableCount >= 3) {
+    // Malumi pattern - stress on third-to-last syllable
+    return applyStressToAntepenultimateSyllable(cleanWord, syllables);
+  } else if (endsInConsonant) {
+    // Maragsa pattern - stress on last syllable
     return applyStressToLastSyllable(cleanWord);
+  } else if (endsInVowel || /n$|ng$/i.test(cleanWord)) {
+    // Malumay pattern - stress on second-to-last syllable (default)
+    return applyStressToPenultimateSyllable(cleanWord, syllableCount);
   } else {
-    // Default Filipino pattern: stress the penultimate syllable
+    // Default to Malumay if no pattern is matched
     return applyStressToPenultimateSyllable(cleanWord, syllableCount);
   }
+}
+
+// Helper function to identify syllables in a Filipino word
+function identifySyllables(word: string): string[] {
+  // Filipino syllable structure is typically CV (consonant-vowel)
+  // or V (vowel) with some variations
+  const syllables: string[] = [];
+  let currentSyllable = '';
+  let i = 0;
+  
+  while (i < word.length) {
+    // Handle special cases: digraphs like 'ng' count as single consonants
+    if (i < word.length - 1 && word.substring(i, i + 2).toLowerCase() === 'ng') {
+      currentSyllable += 'ng';
+      i += 2;
+    } else {
+      currentSyllable += word[i];
+      i++;
+    }
+    
+    // If we have a vowel and the next character is a consonant or end of word,
+    // we've completed a syllable
+    if (/[aeiou]/i.test(currentSyllable) && 
+        (i >= word.length || /[bcdfghjklmnpqrstvwxyz]/i.test(word[i]))) {
+      syllables.push(currentSyllable);
+      currentSyllable = '';
+    }
+  }
+  
+  // Add any remaining characters as the final syllable
+  if (currentSyllable) {
+    syllables.push(currentSyllable);
+  }
+  
+  return syllables;
 }
 
 // Apply stress to the last syllable of a word
@@ -260,6 +912,27 @@ function applyStressToLastSyllable(word: string): string {
   // Add stress marker to the first vowel of the last syllable
   const index = lastVowelMatch.index;
   return word.substring(0, index) + word.charAt(index).toUpperCase() + word.substring(index + 1);
+}
+
+// Apply stress to the antepenultimate (third-to-last) syllable
+function applyStressToAntepenultimateSyllable(word: string, syllables: string[]): string {
+  if (syllables.length < 3) return word;
+  
+  // Calculate the position of the third-to-last syllable
+  let position = 0;
+  for (let i = 0; i < syllables.length - 2; i++) {
+    position += syllables[i].length;
+  }
+  
+  // Find the first vowel in the third-to-last syllable
+  const thirdToLastSyllable = syllables[syllables.length - 3];
+  const vowelIndex = thirdToLastSyllable.search(/[aeiou]/i);
+  
+  if (vowelIndex === -1) return word;
+  
+  // Add stress marker to the vowel in the third-to-last syllable
+  const stressIndex = position + vowelIndex;
+  return word.substring(0, stressIndex) + word.charAt(stressIndex).toUpperCase() + word.substring(stressIndex + 1);
 }
 
 // Apply stress to the penultimate (second-to-last) syllable
