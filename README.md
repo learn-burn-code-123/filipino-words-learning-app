@@ -1,6 +1,6 @@
 # Baybayin Buddies: Filipino Words Game
 
-A fun educational web app game designed to teach kindergarten children basic Filipino words starting with the letters Mm, Ss, and Aa.
+A fun educational web app game designed to teach kindergarten children basic Filipino words starting with the letters Aa, Bb, Ii, Mm, Oo, and Ss.
 
 ## Features
 
