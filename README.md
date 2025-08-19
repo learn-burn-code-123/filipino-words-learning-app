@@ -75,7 +75,19 @@ This application is deployed on Netlify with the following configuration:
 - **Publish Directory**: `.next`
 - **Netlify Plugin**: @netlify/plugin-nextjs (v5.12.0)
 
-The application uses dynamic API routes for text-to-speech functionality which are handled by Netlify Functions.
+The application uses server-side rendering (SSR) for dynamic API routes, particularly for the text-to-speech functionality. This approach allows:
+
+- Dynamic API routes to function properly with the Netlify Next.js plugin
+- Pre-generated static pages for faster loading of main content
+- Server-side processing for the TTS API requests
+
+### Pronunciation Features
+
+The application provides Filipino word pronunciation through multiple methods:
+
+1. **Pre-generated MP3 files**: Local audio files for all 54 Filipino words
+2. **Google Translate TTS API**: Dynamic text-to-speech via the `/api/tts` endpoint
+3. **Web Speech API**: Browser-based fallback for pronunciation
 
 ## Technologies Used
 

@@ -1,4 +1,5 @@
 {
+  "$schema": "https://json.schemastore.org/vscode-settings",
   "css.validate": true,
   "css.lint.unknownAtRules": "ignore",
   "scss.lint.unknownAtRules": "ignore",
